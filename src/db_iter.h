@@ -54,34 +54,58 @@ class TitanDBIterator : public Iterator {
 
   void SeekToFirst() override {
     iter_->SeekToFirst();
-    type_ = TITAN_NUM_SEEK;
+    if (ShouldGetBlobValue()) {
+      StopWatch seek_sw(clock_, statistics(stats_), TITAN_SEEK_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_SEEK);
+    }
   }
 
   void SeekToLast() override {
     iter_->SeekToLast();
-    type_ = TITAN_NUM_SEEK;
+    if (ShouldGetBlobValue()) {
+      StopWatch seek_sw(clock_, statistics(stats_), TITAN_SEEK_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_SEEK);
+    }
   }
 
   void Seek(const Slice &target) override {
     iter_->Seek(target);
-    type_ = TITAN_NUM_SEEK;
+    if (ShouldGetBlobValue()) {
+      StopWatch seek_sw(clock_, statistics(stats_), TITAN_SEEK_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_SEEK);
+    }
   }
 
   void SeekForPrev(const Slice &target) override {
     iter_->SeekForPrev(target);
-    type_ = TITAN_NUM_SEEK;
+    if (ShouldGetBlobValue()) {
+      StopWatch seek_sw(clock_, statistics(stats_), TITAN_SEEK_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_SEEK);
+    }
   }
 
   void Next() override {
     assert(Valid());
     iter_->Next();
-    type_ = TITAN_NUM_NEXT;
+    if (ShouldGetBlobValue()) {
+      StopWatch next_sw(clock_, statistics(stats_), TITAN_NEXT_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_NEXT);
+    }
   }
 
   void Prev() override {
     assert(Valid());
     iter_->Prev();
-    type_ = TITAN_NUM_PREV;
+    if (ShouldGetBlobValue()) {
+      StopWatch prev_sw(clock_, statistics(stats_), TITAN_PREV_MICROS);
+      GetBlobValue();
+      RecordTick(statistics(stats_), TITAN_NUM_PREV);
+    }
   }
 
   Slice key() const override {
@@ -93,28 +117,6 @@ class TitanDBIterator : public Iterator {
     assert(Valid() && !options_.key_only);
     if (options_.key_only) return Slice();
     if (!iter_->IsBlob()) return iter_->value();
-
-    HistogramType hist_type;
-    switch (type_) {
-      case TITAN_NUM_SEEK:
-        hist_type = TITAN_SEEK_MICROS;
-        break;
-      case TITAN_NUM_NEXT:
-        hist_type = TITAN_NEXT_MICROS;
-        break;
-      case TITAN_NUM_PREV:
-        hist_type = TITAN_PREV_MICROS;
-        break;
-      default:
-        hist_type = TITAN_SEEK_MICROS;
-        assert(false);
-    };
-    StopWatch sw(clock_, statistics(stats_), hist_type);
-    RecordTick(statistics(stats_), type_);
-    status_ = GetBlobValue();
-    if (!status_.ok()) {
-      return Slice();
-    }
     return record_.value;
   }
 
@@ -123,61 +125,64 @@ class TitanDBIterator : public Iterator {
   }
 
  private:
-  Status GetBlobValue() const {
+  bool ShouldGetBlobValue() {
+    if (!iter_->Valid() || !iter_->IsBlob() || options_.key_only) {
+      status_ = iter_->status();
+      return false;
+    }
+    return true;
+  }
+
+  void GetBlobValue() {
     assert(iter_->status().ok());
 
-    Status s;
     BlobIndex index;
-    s = DecodeInto(iter_->value(), &index);
-    if (!s.ok()) {
-      TITAN_LOG_ERROR(
-          info_log_, "Titan iterator: failed to decode blob index %s: %s",
-          iter_->value().ToString(true /*hex*/).c_str(), s.ToString().c_str());
-      if (options_.abort_on_failure) std::abort();
-      return s;
+    status_ = DecodeInto(iter_->value(), &index);
+    if (!status_.ok()) {
+      TITAN_LOG_ERROR(info_log_,
+                      "Titan iterator: failed to decode blob index %s: %s",
+                      iter_->value().ToString(true /*hex*/).c_str(),
+                      status_.ToString().c_str());
+      return;
     }
 
     auto it = files_.find(index.file_number);
     if (it == files_.end()) {
       std::unique_ptr<BlobFilePrefetcher> prefetcher;
-      s = storage_->NewPrefetcher(index.file_number, &prefetcher);
-      if (!s.ok()) {
+      status_ = storage_->NewPrefetcher(index.file_number, &prefetcher);
+      if (!status_.ok()) {
         TITAN_LOG_ERROR(
             info_log_,
             "Titan iterator: failed to create prefetcher for blob file %" PRIu64
             ": %s",
-            index.file_number, s.ToString().c_str());
-        if (options_.abort_on_failure) std::abort();
-        return s;
+            index.file_number, status_.ToString().c_str());
+        return;
       }
       it = files_.emplace(index.file_number, std::move(prefetcher)).first;
     }
 
     buffer_.Reset();
-    s = it->second->Get(options_, index.blob_handle, &record_, &buffer_);
-    if (!s.ok()) {
+    status_ = it->second->Get(options_, index.blob_handle, &record_, &buffer_);
+    if (!status_.ok()) {
       TITAN_LOG_ERROR(
           info_log_,
           "Titan iterator: failed to read blob value from file %" PRIu64
           ", offset %" PRIu64 ", size %" PRIu64 ": %s\n",
           index.file_number, index.blob_handle.offset, index.blob_handle.size,
-          s.ToString().c_str());
-      if (options_.abort_on_failure) std::abort();
+          status_.ToString().c_str());
     }
-    return s;
+    return;
   }
 
-  mutable Status status_;
-  mutable BlobRecord record_;
-  mutable PinnableSlice buffer_;
-  TickerType type_;
+  Status status_;
+  BlobRecord record_;
+  PinnableSlice buffer_;
 
   TitanReadOptions options_;
   BlobStorage *storage_;
   std::shared_ptr<ManagedSnapshot> snap_;
   std::unique_ptr<ArenaWrappedDBIter> iter_;
-  mutable std::unordered_map<uint64_t, std::unique_ptr<BlobFilePrefetcher>>
-      files_;
+  std::unordered_map<uint64_t, std::unique_ptr<BlobFilePrefetcher>> files_;
 
   SystemClock *clock_;
   TitanStats *stats_;

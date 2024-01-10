@@ -865,26 +865,20 @@ TEST_F(TitanDBTest, BlobFileIOError) {
   SyncPoint::GetInstance()->DisableProcessing();
   mock_env->SetFilesystemActive(true);
 
-  TitanReadOptions opts;
-  opts.abort_on_failure = false;
-  std::unique_ptr<Iterator> iter(db_->NewIterator(opts));
+  std::unique_ptr<Iterator> iter(db_->NewIterator(ReadOptions()));
   SyncPoint::GetInstance()->EnableProcessing();
   iter->SeekToFirst();
-  iter->value();
   ASSERT_TRUE(iter->status().IsIOError());
   SyncPoint::GetInstance()->DisableProcessing();
   mock_env->SetFilesystemActive(true);
 
-  iter.reset(db_->NewIterator(opts));
+  iter.reset(db_->NewIterator(ReadOptions()));
   iter->SeekToFirst();
-  iter->value();
   ASSERT_TRUE(iter->Valid());
   SyncPoint::GetInstance()->EnableProcessing();
   iter->Next();  // second value (k=2) is inlined
-  iter->value();
   ASSERT_TRUE(iter->Valid());
   iter->Next();
-  iter->value();
   ASSERT_TRUE(iter->status().IsIOError());
   SyncPoint::GetInstance()->DisableProcessing();
   mock_env->SetFilesystemActive(true);
@@ -1008,25 +1002,19 @@ TEST_F(TitanDBTest, BlobFileCorruptionErrorHandling) {
   }
   SyncPoint::GetInstance()->DisableProcessing();
 
-  TitanReadOptions opts;
-  opts.abort_on_failure = false;
-  std::unique_ptr<Iterator> iter(db_->NewIterator(opts));
+  std::unique_ptr<Iterator> iter(db_->NewIterator(ReadOptions()));
   SyncPoint::GetInstance()->EnableProcessing();
   iter->SeekToFirst();
-  iter->value();
   ASSERT_TRUE(iter->status().IsCorruption());
   SyncPoint::GetInstance()->DisableProcessing();
 
-  iter.reset(db_->NewIterator(opts));
+  iter.reset(db_->NewIterator(ReadOptions()));
   iter->SeekToFirst();
-  iter->value();
   ASSERT_TRUE(iter->Valid());
   SyncPoint::GetInstance()->EnableProcessing();
   iter->Next();  // second value (k=2) is inlined
-  iter->value();
   ASSERT_TRUE(iter->Valid());
   iter->Next();
-  iter->value();
   ASSERT_TRUE(iter->status().IsCorruption());
   SyncPoint::GetInstance()->DisableProcessing();
 

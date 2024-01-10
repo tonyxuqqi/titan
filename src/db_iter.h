@@ -156,6 +156,7 @@ class TitanDBIterator : public Iterator {
             "Titan iterator: failed to create prefetcher for blob file %" PRIu64
             ": %s",
             index.file_number, status_.ToString().c_str());
+        std::abort();
         return;
       }
       it = files_.emplace(index.file_number, std::move(prefetcher)).first;
